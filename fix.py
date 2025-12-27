@@ -458,11 +458,12 @@ class PhysicsAnalyzer:
 # ==============================================================================
 # BAGIAN 3: INTERACTIVE PICKER (ALAT BANTU PILIH FRAME)
 # ==============================================================================
-def interactive_frame_picker(n_points_needed=0, point_labels=None, context="Pilih Frame", video_path=NAMA_VIDEO):
+def interactive_frame_picker(n_points_needed=0, point_labels=None, context="Pilih Frame", video_path=NAMA_VIDEO, strict=True):
     """
     Membuka jendela GUI untuk memilih frame secara visual.
     point_labels: List string nama titik yang harus dicari (opsional)
     video_path: Path video yang akan digunakan (default: constant global)
+    strict: Jika True, HARUS memilih n frames. Jika False, boleh kurang (min 2).
     """
     # If point_labels is provided, use it.
     target_labels = point_labels if point_labels else [f"Point {i+1}" for i in range(n_points_needed)]
@@ -509,6 +510,11 @@ def interactive_frame_picker(n_points_needed=0, point_labels=None, context="Pili
              cv2.putText(frame, "SELESAI! TEKAN ENTER.", (20, 150), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
         
+        # ADDITIONAL INFO FOR NON-STRICT
+        if not strict and len(marked_frames) >= 2 and len(marked_frames) < n_needed:
+             cv2.putText(frame, "TEKAN ENTER UNTUK SELESAI (Flexible Mode)", (20, 200), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 255, 255), 2)
+
         # List Marked
         cv2.putText(frame, f"Marked [{len(marked_frames)}]: {marked_frames}", (20, 80), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
@@ -537,8 +543,11 @@ def interactive_frame_picker(n_points_needed=0, point_labels=None, context="Pili
         elif key == 13: # ENTER
             if len(marked_frames) == n_needed:
                 break
+            elif not strict and len(marked_frames) >= 2:
+                print(f"[INFO] EARLY EXIT: {len(marked_frames)} points selected.")
+                break
             else:
-                print(f"[INFO] Belum selesai. Butuh {n_needed} titik.")
+                print(f"[INFO] Belum selesai. Butuh {n_needed} titik. (Strict/Min2)")
         elif key == 27: # ESC
             exit()
             
@@ -941,10 +950,7 @@ def main():
         print("\n--- MODE 5: FREE ANALYSIS (CUSTOM POINTS) ---")
         print("Bebas tentukan jumlah titik. Sistem menghitung V, P, E utk tiap segmen.")
         
-        n_points = int(input("Masukkan Jumlah Titik yang ingin ditandai (min 2): "))
-        if n_points < 2: n_points = 2
-        
-        # --- CASE SELECTION FOR PROPERTIES ---
+        # --- CASE SELECTION FIRST ---
         print("\nPilih Konteks Fisika (Case):")
         print("  A. Case 1 (Marble 1D)")
         print("  B. Case 2 (Marble vs Pingpong 1D)")
@@ -953,19 +959,42 @@ def main():
         
         c_pick = input(">> Pilihan (A/B/C/D): ").upper()
         
-        # Determine Mass & K
+        # Variables for C/D
+        n_points = 2 # Default fallback
+        seg_labels = []
+
+        # Logic A/B: Fixed Points Global
+        if c_pick in ['A', 'B']:
+            n_points = int(input("Masukkan Jumlah Titik yang ingin ditandai (min 2): "))
+            if n_points < 2: n_points = 2
+            
+            # Custom Names only for A/B
+            default_names = [f"Seg {i+1}-{i+2}" for i in range(n_points-1)]
+            cust_q = input("\nIngin memberi nama khusus untuk setiap segmen? (y/n): ")
+            seg_labels = list(default_names)
+            
+            if cust_q.lower() == 'y':
+                print("Masukkan nama segmen (Tekan Enter untuk skip/default):")
+                for i in range(len(seg_labels)):
+                    nama = input(f"  - Nama Segmen {i+1} (Default '{seg_labels[i]}'): ")
+                    if nama.strip(): seg_labels[i] = nama
+        else:
+            print(f"   [INFO] Mode Branching {c_pick}: Jumlah titik akan ditanya PER JALUR saat picking.")
+
+        # Determine Mass & K (Global Default, overrides in loop for D)
         user_m = MASSA_KELERENG
         user_k = K_KELERENG
         
         if c_pick in ['B', 'D']:
              print(f"   [INFO] Case {c_pick} melibatkan Pingpong.")
-             obj_track = input("   Benda apa yang Anda tracking titiknya? (1=Kelereng, 2=Pingpong): ")
-             if obj_track == '2':
-                 user_m = MASSA_PINGPONG
-                 user_k = K_PINGPONG
-                 print("   [SET] Menggunakan parameter PINGPONG.")
-             else:
-                 print("   [SET] Menggunakan parameter KELERENG.")
+             if c_pick == 'B':
+                obj_track = input("   Benda apa yang Anda tracking titiknya? (1=Kelereng, 2=Pingpong): ")
+                if obj_track == '2':
+                    user_m = MASSA_PINGPONG
+                    user_k = K_PINGPONG
+                    print("   [SET] Menggunakan parameter PINGPONG.")
+                else:
+                    print("   [SET] Menggunakan parameter KELERENG.")
         else:
              print("   [SET] Menggunakan parameter KELERENG (Default Case 1/3).")
              
@@ -976,17 +1005,6 @@ def main():
         # Ask Video Strategy
         vid_strategy = input("Video Source? (1=Sama utk semua, 2=Beda tiap trial): ")
         current_vid = NAMA_VIDEO
-        
-        # Ask for Custom Segment Names
-        default_names = [f"Seg {i+1}-{i+2}" for i in range(n_points-1)]
-        cust_q = input("\nIngin memberi nama khusus untuk setiap segmen? (y/n): ")
-        seg_labels = list(default_names)
-        
-        if cust_q.lower() == 'y':
-            print("Masukkan nama segmen (Tekan Enter untuk skip/default):")
-            for i in range(len(seg_labels)):
-                nama = input(f"  - Nama Segmen {i+1} (Default '{seg_labels[i]}'): ")
-                if nama.strip(): seg_labels[i] = nama
         
         all_trials_data = []
         all_trials_p = []
@@ -1002,9 +1020,188 @@ def main():
             fps_trial = proses_video_ke_frame(current_vid)
             if fps_trial > 0: experiment.fps = fps_trial
             
-            # --- PICKING ---
-            c_labels = [f"Titik {i+1}" for i in range(n_points)]
-            pts = interactive_frame_picker(point_labels=c_labels, context=f"Free Run T{t+1}", video_path=current_vid)
+            # --- PICKING (ADAPTIVE for Branching) ---
+            pts = []
+            
+            if c_pick in ['C', 'D']:
+                 print(f"\n[INFO] Mode Branching ({c_pick}) aktif.")
+                 print("PICKING 3 JALUR TERPISAH (Agar urutan waktu tidak tercampur).")
+                 
+                 # 1. SHOOTER
+                 print("\n>>> JALUR 1: SHOOTER (Sebelum Tumbukan)")
+                 try:
+                     n_sho = int(input("    Jumlah titik untuk Shooter?: "))
+                 except: n_sho = 5
+                 pts_sho = interactive_frame_picker(n_points_needed=n_sho, context="Shooter (Pre)", video_path=current_vid, strict=False)
+                 
+                 # 2. TARGET A
+                 print("\n>>> JALUR 2: TARGET A (Post-Left)")
+                 try:
+                     n_t1 = int(input("    Jumlah titik untuk Target A?: "))
+                 except: n_t1 = 5
+                 pts_t1 = interactive_frame_picker(n_points_needed=n_t1, context="Target A (Left)", video_path=current_vid, strict=False)
+                 
+                 # 3. TARGET B
+                 print("\n>>> JALUR 3: TARGET B (Post-Right)")
+                 try:
+                     n_t2 = int(input("    Jumlah titik untuk Target B?: "))
+                 except: n_t2 = 5
+                 pts_t2 = interactive_frame_picker(n_points_needed=n_t2, context="Target B (Right)", video_path=current_vid, strict=False)
+                 
+                 # --- ANALISIS PER BRANCH ---
+                 def analyze_branch(name, p_list, m_obj, k_obj):
+                     """
+                     Mengembalikan:
+                       (last_vals, first_vals, data_dict)
+                       data_dict = {'frames': [], 'v': [], 'p': [], 'e': []}
+                     """
+                     if len(p_list) < 2: return (0,0,0), (0,0,0), None
+                     
+                     print(f"\n--- SEGMEN {name} ---")
+                     print(f"{'SEGMEN':<15} | {'V (m/s)':<10} | {'P (kg.m/s)':<15} | {'E (J)':<10}")
+                     print("-" * 60)
+                     
+                     v_last, p_last, e_last = 0,0,0
+                     v_first, p_first, e_first = 0,0,0
+                     
+                     plot_frames = []
+                     plot_v = []
+                     plot_p = []
+                     plot_e = []
+                     
+                     for i in range(len(p_list)-1):
+                         v = experiment.calculate_velocity(p_list[i], p_list[i+1], dist)
+                         p = experiment.calculate_momentum(m_obj, v)
+                         e = experiment.calculate_energy(m_obj, v, k_obj)
+                         
+                         print(f"{i+1}-{i+2:<14} | {v:.4f}     | {p:.6f}        | {e:.4f}")
+                         
+                         if i == 0: v_first, p_first, e_first = v, p, e
+                         v_last, p_last, e_last = v, p, e
+                         
+                         # Data for plot (use midpoint frame)
+                         mid_frame = (p_list[i] + p_list[i+1]) / 2
+                         plot_frames.append(mid_frame)
+                         plot_v.append(v)
+                         plot_p.append(p)
+                         plot_e.append(e)
+                         
+                     return (v_last, p_last, e_last), (v_first, p_first, e_first), {'frames': plot_frames, 'v': plot_v, 'p': plot_p, 'e': plot_e}
+
+                 print(f"\n[HASIL DETIL TRIAL {t+1}]")
+                 
+                 # Shooter
+                 (v_s_end, p_s_end, e_s_end), _, d_sho = analyze_branch("SHOOTER", pts_sho, user_m, user_k)
+                 
+                 # Target A
+                 _, (v_a_start, p_a_start, e_a_start), d_t1 = analyze_branch("TARGET A", pts_t1, user_m, user_k)
+
+                 # Target B
+                 m_b = MASSA_PINGPONG if c_pick == 'D' else user_m
+                 k_b = K_PINGPONG if c_pick == 'D' else user_k
+                 _, (v_b_start, p_b_start, e_b_start), d_t2 = analyze_branch("TARGET B", pts_t2, m_b, k_b)
+                 
+                 # --- SUMMARY ---
+                 p_final = p_a_start + p_b_start
+                 e_final = e_a_start + e_b_start
+                 
+                 err_p = abs(p_s_end - p_final)/p_s_end*100 if p_s_end > 0 else 0
+                 err_e = abs(e_s_end - e_final)/e_s_end*100 if e_s_end > 0 else 0
+                 
+                 print(f"\n>>> SUMMARY TUMBUKAN (HUKUM KEKEKALAN)")
+                 print(f"  > P Awal (Shooter Akhir): {p_s_end:.6f}")
+                 print(f"  > P Akhir (A+B Awal)    : {p_final:.6f} -> Error: {err_p:.2f}%")
+                 print("-" * 40)
+                 print(f"  > E Awal (Shooter Akhir): {e_s_end:.6f}")
+                 print(f"  > E Akhir (A+B Awal)    : {e_final:.6f} -> Loss: {err_e:.2f}%")
+                 
+                 # --- PLOTTING BRANCHING GRAPHS (V, P, E) ---
+                 if d_sho and d_t1 and d_t2:
+                     import os
+                     # Prep Output Dir
+                     base_name = os.path.splitext(os.path.basename(current_vid))[0]
+                     out_dir = os.path.join("hasil_analisis_frame", base_name)
+                     os.makedirs(out_dir, exist_ok=True)
+
+                     print("\n[KES] Membuat Grafik Profil Branching...")
+                     fig, axs = plt.subplots(3, 1, figsize=(10, 15), sharex=True)
+                     fig.suptitle(f"Analisis Cabang (Branching) - Trial {t+1}", fontsize=16)
+                     
+                     # 1. Velocity Profile
+                     axs[0].plot(d_sho['frames'], d_sho['v'], 'o-', label='Shooter', color='blue')
+                     axs[0].plot(d_t1['frames'], d_t1['v'], 's-', label='Target A (Left)', color='green')
+                     axs[0].plot(d_t2['frames'], d_t2['v'], '^-', label='Target B (Right)', color='red')
+                     axs[0].set_ylabel("Velocity (m/s)")
+                     axs[0].set_title("Profil Kecepatan per Frame")
+                     axs[0].grid(True)
+                     axs[0].legend()
+                     
+                     # 2. Momentum Profile
+                     axs[1].plot(d_sho['frames'], d_sho['p'], 'o--', label='Shooter', color='blue')
+                     axs[1].plot(d_t1['frames'], d_t1['p'], 's--', label='Target A', color='green')
+                     axs[1].plot(d_t2['frames'], d_t2['p'], '^--', label='Target B', color='red')
+                     axs[1].set_ylabel("Momentum (kg.m/s)")
+                     axs[1].set_title("Profil Momentum per Frame")
+                     axs[1].grid(True)
+                     
+                     # 3. Energy Profile
+                     axs[2].plot(d_sho['frames'], d_sho['e'], 'o:', label='Shooter', color='blue')
+                     axs[2].plot(d_t1['frames'], d_t1['e'], 's:', label='Target A', color='green')
+                     axs[2].plot(d_t2['frames'], d_t2['e'], '^:', label='Target B', color='red')
+                     axs[2].set_ylabel("Kinetic Energy (J)")
+                     axs[2].set_title("Profil Energi per Frame")
+                     axs[2].set_xlabel("Frame Number")
+                     axs[2].grid(True)
+                     
+                     plt.tight_layout()
+                     
+                     save_path_prof = os.path.join(out_dir, f"Grafik_Profil_Branching_Trial{t+1}.png")
+                     plt.savefig(save_path_prof)
+                     print(f"[INFO] Grafik Profil disimpan di: {save_path_prof}")
+                     
+                     # --- GRAFIK 2: KONSERVASI & LOSS (BAR CHART) ---
+                     print("[KES] Membuat Grafik Komponen Hilang (Kekekalan)...")
+                     fig2, axs2 = plt.subplots(1, 2, figsize=(12, 6))
+                     fig2.suptitle(f"Distribusi Momentum & Energi (Awal vs Akhir) - Trial {t+1}", fontsize=16)
+                     
+                     labels = ['Shooter(Awal)', 'Target A', 'Target B', 'Hilang(Loss)']
+                     colors = ['blue', 'green', 'red', 'gray']
+                     
+                     # Momentum Data
+                     p_loss_val = p_s_end - (p_a_start + p_b_start)
+                     vals_p = [p_s_end, p_a_start, p_b_start, p_loss_val]
+                     
+                     axs2[0].bar(labels, vals_p, color=colors, alpha=0.7, edgecolor='black')
+                     axs2[0].set_title("Komponen Momentum (kg.m/s)")
+                     axs2[0].set_ylabel("Momentum")
+                     axs2[0].grid(axis='y', linestyle='--', alpha=0.5)
+                     
+                     # Add labels
+                     for i, v in enumerate(vals_p):
+                         axs2[0].text(i, v, f"{v:.5f}", ha='center', va='bottom', fontsize=9)
+
+                     # Energy Data
+                     e_loss_val = e_s_end - (e_a_start + e_b_start)
+                     vals_e = [e_s_end, e_a_start, e_b_start, e_loss_val]
+                     
+                     axs2[1].bar(labels, vals_e, color=colors, alpha=0.7, edgecolor='black')
+                     axs2[1].set_title("Komponen Energi (Joule)")
+                     axs2[1].set_ylabel("Energi")
+                     axs2[1].grid(axis='y', linestyle='--', alpha=0.5)
+                     
+                     for i, v in enumerate(vals_e):
+                         axs2[1].text(i, v, f"{v:.5f}", ha='center', va='bottom', fontsize=9)
+                     
+                     plt.tight_layout()
+                     save_path_loss = os.path.join(out_dir, f"Grafik_Loss_Branching_Trial{t+1}.png")
+                     plt.savefig(save_path_loss)
+                     print(f"[INFO] Grafik Loss disimpan di: {save_path_loss}")
+
+                     plt.show()
+
+            else:
+                 c_labels = [f"Titik {i+1}" for i in range(n_points)]
+                 pts = interactive_frame_picker(point_labels=c_labels, context=f"Free Run T{t+1}", video_path=current_vid)
             
             if len(pts) == n_points:
                 print(f"\n[HASIL ANALISIS TRIAL {t+1}]")
@@ -1038,62 +1235,108 @@ def main():
                 all_trials_p.append(trial_stats_p)
                 all_trials_e.append(trial_stats_e)
                 
-                # --- COLLISION ANALYSIS (6-7 and 12-13) ---
-                # Indices in list: Seg 6-7 is index 5 (0-based), Seg 12-13 is index 11.
-                # Logic: Compare Pre-Collision (Segment Before) vs Post-Collision (Segment After).
-                # If "Collision happen at 6-7", it means segment 6-7 is the IMPACT process.
-                # So Pre = Segment 5-6 (idx 4), Post = Segment 7-8 (idx 6).
-                
-                print(f"\n>>> ANALISIS TUMBUKAN KHUSUS (TRIAL {t+1})")
-                
-                # Collision 1 (Titik 6-7) -> Index 5
-                # Pre: Index 4 (Titik 5-6), Post: Index 6 (Titik 7-8)
-                if len(pts) > 7:
-                    idx_imp = 5 # Seg 6-7
-                    # P/E at Pre (Seg 5-6)
-                    v_pre1 = experiment.calculate_velocity(pts[4], pts[5], dist)
-                    p_pre1 = experiment.calculate_momentum(user_m, v_pre1)
-                    e_pre1 = experiment.calculate_energy(user_m, v_pre1, user_k)
+                # --- COLLISION ANALYSIS (ADAPTIVE) ---
+                if c_pick in ['C', 'D'] and len(pts) >= 8:
+                    print(f"\n>>> ANALISIS TUMBUKAN BERCABANG ({c_pick})")
+                    print("    (Menggunakan Logika 8 Titik: Ramp->Flat->PostA->PostB)")
+                    # Pts: 0-1 (Ramp), 2-3 (Flat/Pre), 4-5 (Post A), 6-7 (Post B)
                     
-                    # P/E at Post (Seg 7-8)
-                    v_post1 = experiment.calculate_velocity(pts[6], pts[7], dist)
-                    p_post1 = experiment.calculate_momentum(user_m, v_post1)
-                    e_post1 = experiment.calculate_energy(user_m, v_post1, user_k)
+                    # 1. Shooter / Pre-Collision (indices 2-3)
+                    v_sho = experiment.calculate_velocity(pts[2], pts[3], dist)
+                    p_sho = experiment.calculate_momentum(user_m, v_sho)
+                    e_sho = experiment.calculate_energy(user_m, v_sho, user_k)
                     
-                    err_p1 = abs(p_pre1 - p_post1)/p_pre1*100 if p_pre1>0 else 0
-                    err_e1 = abs(e_pre1 - e_post1)/e_pre1*100 if e_pre1>0 else 0
+                    # 2. Target A (indices 4-5)
+                    m_t1 = user_m; k_t1 = user_k
+                    v_t1 = experiment.calculate_velocity(pts[4], pts[5], dist)
+                    p_t1 = experiment.calculate_momentum(m_t1, v_t1)
+                    e_t1 = experiment.calculate_energy(m_t1, v_t1, k_t1)
                     
-                    print(f"  [COLLISION 1 @ Titik 6-7]")
-                    print(f"  Pre-Impact (5-6): P={p_pre1:.5f}, E={e_pre1:.5f}")
-                    print(f"  Post-Impact(7-8): P={p_post1:.5f}, E={e_post1:.5f}")
-                    print(f"  > Momentum Lost : {err_p1:.2f}%")
-                    print(f"  > Energy Lost   : {err_e1:.2f}%")
+                    # 3. Target B (indices 6-7)
+                    m_t2 = MASSA_PINGPONG if c_pick == 'D' else user_m
+                    k_t2 = K_PINGPONG if c_pick == 'D' else user_k
+                    v_t2 = experiment.calculate_velocity(pts[6], pts[7], dist)
+                    p_t2 = experiment.calculate_momentum(m_t2, v_t2)
+                    e_t2 = experiment.calculate_energy(m_t2, v_t2, k_t2)
+                    
+                    # Totals
+                    p_total_post = p_t1 + p_t2
+                    e_total_post = e_t1 + e_t2
+                    
+                    err_p = abs(p_sho - p_total_post)/p_sho*100 if p_sho > 0 else 0
+                    err_e = abs(e_sho - e_total_post)/e_sho*100 if e_sho > 0 else 0
+                    
+                    print(f"  [1] Kecepatan Awal (Shooter)   : {v_sho:.4f} m/s")
+                    print(f"  [2] Kecepatan Akhir A (Target) : {v_t1:.4f} m/s")
+                    print(f"  [3] Kecepatan Akhir B (Target) : {v_t2:.4f} m/s")
+                    print("-" * 50)
+                    print(f"  ANALISIS MOMENTUM:")
+                    print(f"  > P Shooter : {p_sho:.5f} kg.m/s")
+                    print(f"  > P Target A: {p_t1:.5f} kg.m/s")
+                    print(f"  > P Target B: {p_t2:.5f} kg.m/s")
+                    print(f"  > P Total Akhir (A+B): {p_total_post:.5f} -> Error: {err_p:.2f}%")
+                    print("-" * 50)
+                    print(f"  ANALISIS ENERGI:")
+                    print(f"  > E Shooter : {e_sho:.5f} J")
+                    print(f"  > E Akir (A+B): {e_total_post:.5f} J -> Loss: {err_e:.2f}%")
 
-                # Collision 2 (Titik 12-13) -> Index 11
-                # Pre: Index 10 (Titik 11-12), Post: Index 12 (Titik 13-14)
-                if len(pts) > 13:
-                    idx_imp2 = 11 # Seg 12-13
-                    # Pre (11-12)
-                    v_pre2 = experiment.calculate_velocity(pts[10], pts[11], dist)
-                    p_pre2 = experiment.calculate_momentum(user_m, v_pre2)
-                    e_pre2 = experiment.calculate_energy(user_m, v_pre2, user_k)
+                    # Analisis Tikungan (Wall) Optional
+                    if len(pts) >= 2:
+                        v_ramp = experiment.calculate_velocity(pts[0], pts[1], dist)
+                        p_ramp = experiment.calculate_momentum(user_m, v_ramp)
+                        print("-" * 50)
+                        print(f"  ANALISIS TIKUNGAN (WALL):")
+                        print(f"  > Momentum Ramp: {p_ramp:.5f} -> Momentum Flat: {p_sho:.5f}")
+                        loss_wall = (p_ramp - p_sho)
+                        print(f"  > Selisih Momentum (Impuls Dinding): {loss_wall:.5f} kg.m/s")
+
+                else:
+                    print(f"\n>>> ANALISIS TUMBUKAN KHUSUS (TRIAL {t+1})")
                     
-                    # Post (13-14)
-                    v_post2 = experiment.calculate_velocity(pts[12], pts[13], dist)
-                    p_post2 = experiment.calculate_momentum(user_m, v_post2)
-                    e_post2 = experiment.calculate_energy(user_m, v_post2, user_k)
-                    
-                    err_p2 = abs(p_pre2 - p_post2)/p_pre2*100 if p_pre2>0 else 0
-                    err_e2 = abs(e_pre2 - e_post2)/e_pre2*100 if e_pre2>0 else 0
-                    
-                    print(f"\n  [COLLISION 2 @ Titik 12-13]")
-                    print(f"  Pre-Impact (11-12): P={p_pre2:.5f}, E={e_pre2:.5f}")
-                    print(f"  Post-Impact(13-14): P={p_post2:.5f}, E={e_post2:.5f}")
-                    print(f"  > Momentum Lost   : {err_p2:.2f}%")
-                    print(f"  > Energy Lost     : {err_e2:.2f}%")
-                
-                    print(f"  > Momentum Lost   : {err_p2:.2f}%")
-                    print(f"  > Energy Lost     : {err_e2:.2f}%")
+                    # Collision 1 (Titik 6-7) -> Index 5
+                    # Pre: Index 4 (Titik 5-6), Post: Index 6 (Titik 7-8)
+                    if len(pts) > 7:
+                        idx_imp = 5 # Seg 6-7
+                        # P/E at Pre (Seg 5-6)
+                        v_pre1 = experiment.calculate_velocity(pts[4], pts[5], dist)
+                        p_pre1 = experiment.calculate_momentum(user_m, v_pre1)
+                        e_pre1 = experiment.calculate_energy(user_m, v_pre1, user_k)
+                        
+                        # P/E at Post (Seg 7-8)
+                        v_post1 = experiment.calculate_velocity(pts[6], pts[7], dist)
+                        p_post1 = experiment.calculate_momentum(user_m, v_post1)
+                        e_post1 = experiment.calculate_energy(user_m, v_post1, user_k)
+                        
+                        err_p1 = abs(p_pre1 - p_post1)/p_pre1*100 if p_pre1>0 else 0
+                        err_e1 = abs(e_pre1 - e_post1)/e_pre1*100 if e_pre1>0 else 0
+                        
+                        print(f"  [COLLISION 1 @ Titik 6-7]")
+                        print(f"  Pre-Impact (5-6): P={p_pre1:.5f}, E={e_pre1:.5f}")
+                        print(f"  Post-Impact(7-8): P={p_post1:.5f}, E={e_post1:.5f}")
+                        print(f"  > Momentum Lost : {err_p1:.2f}%")
+                        print(f"  > Energy Lost   : {err_e1:.2f}%")
+    
+                    # Collision 2 (Titik 12-13) -> Index 11
+                    if len(pts) > 13:
+                        idx_imp2 = 11 # Seg 12-13
+                        # Pre (11-12)
+                        v_pre2 = experiment.calculate_velocity(pts[10], pts[11], dist)
+                        p_pre2 = experiment.calculate_momentum(user_m, v_pre2)
+                        e_pre2 = experiment.calculate_energy(user_m, v_pre2, user_k)
+                        
+                        # Post (13-14)
+                        v_post2 = experiment.calculate_velocity(pts[12], pts[13], dist)
+                        p_post2 = experiment.calculate_momentum(user_m, v_post2)
+                        e_post2 = experiment.calculate_energy(user_m, v_post2, user_k)
+                        
+                        err_p2 = abs(p_pre2 - p_post2)/p_pre2*100 if p_pre2>0 else 0
+                        err_e2 = abs(e_pre2 - e_post2)/e_pre2*100 if e_pre2>0 else 0
+                        
+                        print(f"\n  [COLLISION 2 @ Titik 12-13]")
+                        print(f"  Pre-Impact (11-12): P={p_pre2:.5f}, E={e_pre2:.5f}")
+                        print(f"  Post-Impact(13-14): P={p_post2:.5f}, E={e_post2:.5f}")
+                        print(f"  > Momentum Lost   : {err_p2:.2f}%")
+                        print(f"  > Energy Lost     : {err_e2:.2f}%")
                 
                 print("-" * 60)
 
