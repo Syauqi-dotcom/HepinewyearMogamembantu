@@ -27,9 +27,6 @@ GRAVITASI = 9.81
 # ==============================================================================
 # BAGIAN 1: EKSTRAKSI FRAME (Sama seperti sebelumnya, efisien)
 # ==============================================================================
-# ==============================================================================
-# BAGIAN 1: EKSTRAKSI FRAME (Sama seperti sebelumnya, efisien)
-# ==============================================================================
 def proses_video_ke_frame(video_path=NAMA_VIDEO):
     print("\n" + "="*60)
     print(f"TAHAP 1: MEMPROSES VIDEO: {video_path}")
@@ -562,8 +559,10 @@ def main():
     
     print("Pilih Mode:")
     print("1. Analisis Profil Kecepatan (Multi-Segmen)")
-    print("2. Analisis Tumbukan (Case 1/2/3/4) dengan Multi-Trial")
-    print("3. Analisis LENGKAP (Siku + Gesekan + Tumbukan) [NEW!]")
+    print("2. Analisis Tumbukan (Case 1/2/3/4) [Updated 8 Points]")
+    print("3. Analisis Flow Energi (Ultimate Analysis)")
+    print("4. ALL-IN-ONE (Mode 1 + 2 + 3 Sekaligus) [RECOMMENDED]")
+    print("5. FREE ANALYSIS (Custom Points, Hitung P & E)")
     
     mode = input(">> Masukkan Pilihan (1/2/3): ")
     
@@ -708,28 +707,28 @@ def main():
             if fps_trial > 0: experiment.fps = fps_trial
             # ----------------------------------
             
-            print("Pilih 6 TITIK UTAMA sesuai instruksi di layar:")
-            for idx, txt in enumerate(current_labels):
-                 print(f"  {idx+1}. {txt}")
+            # --- UPDATE: MODE 2 NOW USES 8 POINTS (To be consistent) ---
+            # But technically Collision only fails if we filter; let's adhere to user request
+            # "ubah juga mode 2 menjadi 8 titik seperti mode 3"
+            labels_8 = [
+               "Start Ramp", "End Ramp",
+               "Start Datar", "End Datar (Pre-Col)",
+               "Start Post 1", "End Post 1",
+               "Start Post 2", "End Post 2"
+            ]
 
-            frames = interactive_frame_picker(n_points_needed=6, point_labels=current_labels, context=f"{case_name} T{t+1}", video_path=current_vid)
+            frames = interactive_frame_picker(n_points_needed=8, point_labels=labels_8, context=f"{case_name} T{t+1}", video_path=current_vid)
             
-            if len(frames) >= 6:
-                fa1, fa2 = frames[0], frames[1]
-                fb1_start, fb1_end = frames[2], frames[3]
-                fb2_start, fb2_end = frames[4], frames[5]
+            if len(frames) == 8:
+                # Extract relevant frames for Collision (Flat End & Post)
+                # V_before comes from Flat segment (pts 2-3)
+                f_flat_start, f_flat_end = frames[2], frames[3]
+                f_p1_start, f_p1_end = frames[4], frames[5]
+                f_p2_start, f_p2_end = frames[6], frames[7]
                 
-                v_before = 0
-                if fa2 > fa1: 
-                    v_before = jarak_ukur / ((fa2 - fa1) / experiment.fps)
-                
-                v_after1 = 0
-                if fb1_end > fb1_start:
-                    v_after1 = jarak_ukur / ((fb1_end - fb1_start) / experiment.fps)
-                    
-                v_after2 = 0
-                if fb2_end > fb2_start:
-                    v_after2 = jarak_ukur / ((fb2_end - fb2_start) / experiment.fps)
+                v_before = experiment.calculate_velocity(f_flat_start, f_flat_end, jarak_ukur)
+                v_after1 = experiment.calculate_velocity(f_p1_start, f_p1_end, jarak_ukur)
+                v_after2 = experiment.calculate_velocity(f_p2_start, f_p2_end, jarak_ukur)
                 
                 data_trials.append({
                     'v_before': v_before,
@@ -743,7 +742,7 @@ def main():
                 print(f"  v_after_2: {v_after2:.4f} m/s")
                 
             else:
-                print("[ERROR] Point kurang dari 6. Skip Trial ini.")
+                print("[ERROR] Point kurang dari 8. Skip Trial ini.")
                 
         if data_trials:
             df_result = experiment.analyze_momentum_case(case_name, data_trials)
@@ -831,6 +830,417 @@ def main():
             experiment.plot_advanced_waterfall(df_res)
         else:
             print("[INFO] Tidak ada data valid untuk dianalisis.")
+
+    elif mode == '4':
+        # --- ALL IN ONE ANALYSIS ---
+        print("\n--- MODE 4: ALL-IN-ONE SUPER ANALYSIS ---")
+        print("Satu kali picking (8 titik) untuk dapat hasil Mode 1, 2, dan 3.")
+        
+        # Setup Case
+        cmap = {'A':'Case 1','B':'Case 2','C':'Case 3','D':'Case 4'}
+        print("Pilih Tumbukan:")
+        print("  A. Case 1 (Marble-Marble 1D)\n  B. Case 2 (Marble-Pingpong 1D)\n  C. Case 3 (Branching)\n  D. Case 4 (Branching Mixed)")
+        cname = cmap.get(input(">> Pilihan: ").upper(), 'Case 1')
+        
+        dist = float(input("Jarak ukur standar (m): "))
+        n_trials = int(input("Jumlah Trial: "))
+        
+        # Storage
+        data_trials_m2 = [] # For Mode 2 (Collision)
+        all_velocities_m1 = [] # For Mode 1 (Profile)
+        data_m3 = [] # For Mode 3 (Energy)
+        
+        # Labels for 8 Points
+        labels_8 = [
+            "Start Ramp", "End Ramp",
+            "Start Datar", "End Datar (Pre-Col)",
+            "Start Post 1", "End Post 1",
+            "Start Post 2", "End Post 2"
+        ]
+        
+        # Labels for Graph Mode 1
+        labels_graph = ["Ramp", "Flat (Pre-Col)", "Post-Col 1", "Post-Col 2"]
+        
+        # Video Strategy
+        vid_strategy = input("Video Source? (1=Sama utk semua, 2=Beda tiap trial): ")
+        current_vid = NAMA_VIDEO
+        
+        for t in range(n_trials):
+            print(f"\n--- TRIAL {t+1} / {n_trials} ---")
+            if vid_strategy == '2':
+                v_input = input(f"Masukkan nama video (Default {NAMA_VIDEO}): ")
+                if v_input.strip(): current_vid = v_input
+            
+            # Recalculate FPS
+            fps_trial = proses_video_ke_frame(current_vid)
+            if fps_trial > 0: experiment.fps = fps_trial
+            
+            # --- PICKING ---
+            pts = interactive_frame_picker(point_labels=labels_8, context=f"All-In-One T{t+1}", video_path=current_vid)
+            
+            if len(pts) == 8:
+                # Calc Velocities
+                v_ramp = experiment.calculate_velocity(pts[0], pts[1], dist)
+                v_flat = experiment.calculate_velocity(pts[2], pts[3], dist) # Also V_before for collision
+                v_p1 = experiment.calculate_velocity(pts[4], pts[5], dist)
+                v_p2 = experiment.calculate_velocity(pts[6], pts[7], dist)
+                
+                # --- DATA FOR MODE 1 ---
+                all_velocities_m1.append([v_ramp, v_flat, v_p1, v_p2])
+                
+                # --- DATA FOR MODE 2 ---
+                data_trials_m2.append({
+                    'v_before': v_flat, # Velocity at Flat is Velocity Before Collision
+                    'v_after1': v_p1,
+                    'v_after2': v_p2
+                })
+                
+                # --- DATA FOR MODE 3 ---
+                m_p = MASSA_KELERENG; k_p = K_KELERENG
+                if cname in ['Case 2', 'Case 4']: 
+                     m1=MASSA_KELERENG; k1=K_KELERENG; m2=MASSA_PINGPONG; k2=K_PINGPONG
+                else:
+                     m1=MASSA_KELERENG; k1=K_KELERENG; m2=MASSA_KELERENG; k2=K_KELERENG
+
+                data_m3.append({
+                    'Case': cname,
+                    'E_Ramp_End': experiment.calculate_energy(m_p, v_ramp, k_p),
+                    'E_Corner_Exit': experiment.calculate_energy(m_p, v_flat, k_p), # Assume corner exit ~ flat start
+                    'E_Pre_Collision': experiment.calculate_energy(m_p, v_flat, k_p),
+                    'E_Post_Total': experiment.calculate_energy(m1, v_p1, k1) + experiment.calculate_energy(m2, v_p2, k2)
+                })
+                
+                print(f"[SUCCESS] Data Trial {t+1} Captured.")
+            else:
+                 print("[SKIP] Points incomplete.")
+
+        # --- EXECUTE ALL ANALYSES ---
+        if data_trials_m2:
+            print("\n" + "="*60)
+            print(">>> HASIL ANALYSIS MODE 1 (PROFIL KECEPATAN)")
+            experiment.plot_velocity_profile(all_velocities_m1, labels_graph)
+            
+            print("\n" + "="*60)
+            print(">>> HASIL ANALYSIS MODE 2 (MOMENTUM & TUMBUKAN)")
+            df_m2 = experiment.analyze_momentum_case(cname, data_trials_m2)
+            print(df_m2[['v_before', 'P_awal', 'P_akhir', 'Error_P (%)']].to_string(index=False))
+            print(f"Rata-rata Error P: {df_m2['Error_P (%)'].mean():.2f}%")
+            experiment.print_automated_analysis(df_m2)
+            experiment.plot_conservation(cname)
+            
+            print("\n" + "="*60)
+            print(">>> HASIL ANALYSIS MODE 3 (ENERGY WATERFALL & STORY)")
+            df_m3 = pd.DataFrame(data_m3)
+            experiment.print_storytelling_report(df_m3)
+            experiment.plot_advanced_waterfall(df_m3)
+            
+            print("\n[DONE] Semua analisis selesai! Grafik telah disimpan.")
+
+    elif mode == '5':
+        # --- MODE 5: FREE ANALYSIS (CUSTOM) ---
+        print("\n--- MODE 5: FREE ANALYSIS (CUSTOM POINTS) ---")
+        print("Bebas tentukan jumlah titik. Sistem menghitung V, P, E utk tiap segmen.")
+        
+        n_points = int(input("Masukkan Jumlah Titik yang ingin ditandai (min 2): "))
+        if n_points < 2: n_points = 2
+        
+        # --- CASE SELECTION FOR PROPERTIES ---
+        print("\nPilih Konteks Fisika (Case):")
+        print("  A. Case 1 (Marble 1D)")
+        print("  B. Case 2 (Marble vs Pingpong 1D)")
+        print("  C. Case 3 (Marble Branching)")
+        print("  D. Case 4 (Marble/Pingpong Branching)")
+        
+        c_pick = input(">> Pilihan (A/B/C/D): ").upper()
+        
+        # Determine Mass & K
+        user_m = MASSA_KELERENG
+        user_k = K_KELERENG
+        
+        if c_pick in ['B', 'D']:
+             print(f"   [INFO] Case {c_pick} melibatkan Pingpong.")
+             obj_track = input("   Benda apa yang Anda tracking titiknya? (1=Kelereng, 2=Pingpong): ")
+             if obj_track == '2':
+                 user_m = MASSA_PINGPONG
+                 user_k = K_PINGPONG
+                 print("   [SET] Menggunakan parameter PINGPONG.")
+             else:
+                 print("   [SET] Menggunakan parameter KELERENG.")
+        else:
+             print("   [SET] Menggunakan parameter KELERENG (Default Case 1/3).")
+             
+        dist = float(input("\nJarak Ukur per segmen/antar titik (m): "))
+        
+        n_trials = int(input("Jumlah Trial: "))
+        
+        # Ask Video Strategy
+        vid_strategy = input("Video Source? (1=Sama utk semua, 2=Beda tiap trial): ")
+        current_vid = NAMA_VIDEO
+        
+        # Ask for Custom Segment Names
+        default_names = [f"Seg {i+1}-{i+2}" for i in range(n_points-1)]
+        cust_q = input("\nIngin memberi nama khusus untuk setiap segmen? (y/n): ")
+        seg_labels = list(default_names)
+        
+        if cust_q.lower() == 'y':
+            print("Masukkan nama segmen (Tekan Enter untuk skip/default):")
+            for i in range(len(seg_labels)):
+                nama = input(f"  - Nama Segmen {i+1} (Default '{seg_labels[i]}'): ")
+                if nama.strip(): seg_labels[i] = nama
+        
+        all_trials_data = []
+        all_trials_p = []
+        all_trials_e = []
+
+        for t in range(n_trials):
+            print(f"\n--- TRIAL {t+1} / {n_trials} ---")
+            if vid_strategy == '2':
+                v_input = input(f"Masukkan nama video (Default {NAMA_VIDEO}): ")
+                if v_input.strip(): current_vid = v_input
+            
+            # Recalculate FPS
+            fps_trial = proses_video_ke_frame(current_vid)
+            if fps_trial > 0: experiment.fps = fps_trial
+            
+            # --- PICKING ---
+            c_labels = [f"Titik {i+1}" for i in range(n_points)]
+            pts = interactive_frame_picker(point_labels=c_labels, context=f"Free Run T{t+1}", video_path=current_vid)
+            
+            if len(pts) == n_points:
+                print(f"\n[HASIL ANALISIS TRIAL {t+1}]")
+                print(f"{'SEGMEN':<20} | {'VELOCITY (m/s)':<15} | {'MOMENTUM (kg.m/s)':<20} | {'ENERGY (J)':<15}")
+                print("-" * 80)
+                
+                print("-" * 80)
+                
+                trial_stats = []
+                trial_stats_p = []
+                trial_stats_e = []
+                
+                for i in range(len(pts)-1):
+                    f_start = pts[i]
+                    f_end   = pts[i+1]
+                    
+                    v = experiment.calculate_velocity(f_start, f_end, dist)
+                    # Force 0 if v is anomalously High/Low? No, let user decide.
+                    
+                    p = experiment.calculate_momentum(user_m, v)
+                    e = experiment.calculate_energy(user_m, v, user_k)
+                    
+                    seg_name = seg_labels[i]
+                    print(f"{seg_name:<20} | {v:.4f}          | {p:.6f}             | {e:.4f}")
+                    
+                    trial_stats.append(v)
+                    trial_stats_p.append(p)
+                    trial_stats_e.append(e)
+                
+                all_trials_data.append(trial_stats)
+                all_trials_p.append(trial_stats_p)
+                all_trials_e.append(trial_stats_e)
+                
+                # --- COLLISION ANALYSIS (6-7 and 12-13) ---
+                # Indices in list: Seg 6-7 is index 5 (0-based), Seg 12-13 is index 11.
+                # Logic: Compare Pre-Collision (Segment Before) vs Post-Collision (Segment After).
+                # If "Collision happen at 6-7", it means segment 6-7 is the IMPACT process.
+                # So Pre = Segment 5-6 (idx 4), Post = Segment 7-8 (idx 6).
+                
+                print(f"\n>>> ANALISIS TUMBUKAN KHUSUS (TRIAL {t+1})")
+                
+                # Collision 1 (Titik 6-7) -> Index 5
+                # Pre: Index 4 (Titik 5-6), Post: Index 6 (Titik 7-8)
+                if len(pts) > 7:
+                    idx_imp = 5 # Seg 6-7
+                    # P/E at Pre (Seg 5-6)
+                    v_pre1 = experiment.calculate_velocity(pts[4], pts[5], dist)
+                    p_pre1 = experiment.calculate_momentum(user_m, v_pre1)
+                    e_pre1 = experiment.calculate_energy(user_m, v_pre1, user_k)
+                    
+                    # P/E at Post (Seg 7-8)
+                    v_post1 = experiment.calculate_velocity(pts[6], pts[7], dist)
+                    p_post1 = experiment.calculate_momentum(user_m, v_post1)
+                    e_post1 = experiment.calculate_energy(user_m, v_post1, user_k)
+                    
+                    err_p1 = abs(p_pre1 - p_post1)/p_pre1*100 if p_pre1>0 else 0
+                    err_e1 = abs(e_pre1 - e_post1)/e_pre1*100 if e_pre1>0 else 0
+                    
+                    print(f"  [COLLISION 1 @ Titik 6-7]")
+                    print(f"  Pre-Impact (5-6): P={p_pre1:.5f}, E={e_pre1:.5f}")
+                    print(f"  Post-Impact(7-8): P={p_post1:.5f}, E={e_post1:.5f}")
+                    print(f"  > Momentum Lost : {err_p1:.2f}%")
+                    print(f"  > Energy Lost   : {err_e1:.2f}%")
+
+                # Collision 2 (Titik 12-13) -> Index 11
+                # Pre: Index 10 (Titik 11-12), Post: Index 12 (Titik 13-14)
+                if len(pts) > 13:
+                    idx_imp2 = 11 # Seg 12-13
+                    # Pre (11-12)
+                    v_pre2 = experiment.calculate_velocity(pts[10], pts[11], dist)
+                    p_pre2 = experiment.calculate_momentum(user_m, v_pre2)
+                    e_pre2 = experiment.calculate_energy(user_m, v_pre2, user_k)
+                    
+                    # Post (13-14)
+                    v_post2 = experiment.calculate_velocity(pts[12], pts[13], dist)
+                    p_post2 = experiment.calculate_momentum(user_m, v_post2)
+                    e_post2 = experiment.calculate_energy(user_m, v_post2, user_k)
+                    
+                    err_p2 = abs(p_pre2 - p_post2)/p_pre2*100 if p_pre2>0 else 0
+                    err_e2 = abs(e_pre2 - e_post2)/e_pre2*100 if e_pre2>0 else 0
+                    
+                    print(f"\n  [COLLISION 2 @ Titik 12-13]")
+                    print(f"  Pre-Impact (11-12): P={p_pre2:.5f}, E={e_pre2:.5f}")
+                    print(f"  Post-Impact(13-14): P={p_post2:.5f}, E={e_post2:.5f}")
+                    print(f"  > Momentum Lost   : {err_p2:.2f}%")
+                    print(f"  > Energy Lost     : {err_e2:.2f}%")
+                
+                    print(f"  > Momentum Lost   : {err_p2:.2f}%")
+                    print(f"  > Energy Lost     : {err_e2:.2f}%")
+                
+                print("-" * 60)
+
+                # --- POPUP VISUALIZATION PER TRIAL (COLLISION) ---
+                # Only if we have collision data
+                if len(pts) > 7:
+                    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+                    
+                    # Data for Collision 1
+                    labels = ['Pre (5-6)', 'Post (7-8)']
+                    p_vals = [p_pre1, p_post1]
+                    e_vals = [e_pre1, e_post1]
+                    
+                    # Plot Momentum
+                    axs[0].bar(labels, p_vals, color=['blue', 'green'], alpha=0.7)
+                    axs[0].set_title(f"Collision 1: Momentum Change\nLoss: {err_p1:.1f}%")
+                    axs[0].set_ylabel("Momentum (kg.m/s)")
+                    for i, v in enumerate(p_vals):
+                        axs[0].text(i, v, f"{v:.5f}", ha='center', va='bottom')
+                        
+                    # Plot Energy
+                    axs[1].bar(labels, e_vals, color=['red', 'orange'], alpha=0.7)
+                    axs[1].set_title(f"Collision 1: Energy Change\nLoss: {err_e1:.1f}%")
+                    axs[1].set_ylabel("M.Kinetik (Joule)")
+                    for i, v in enumerate(e_vals):
+                        axs[1].text(i, v, f"{v:.5f}", ha='center', va='bottom')
+
+                    plt.suptitle(f"Analisis Tumbukan 1 - Trial {t+1}")
+                    plt.tight_layout()
+                    plt.show()
+
+                if len(pts) > 13:
+                    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+                    
+                    # Data for Collision 2
+                    labels = ['Pre (11-12)', 'Post (13-14)']
+                    p_vals = [p_pre2, p_post2]
+                    e_vals = [e_pre2, e_post2]
+                    
+                    # Plot Momentum
+                    axs[0].bar(labels, p_vals, color=['blue', 'green'], alpha=0.7)
+                    axs[0].set_title(f"Collision 2: Momentum Change\nLoss: {err_p2:.1f}%")
+                    axs[0].set_ylabel("Momentum (kg.m/s)")
+                    for i, v in enumerate(p_vals):
+                        axs[0].text(i, v, f"{v:.5f}", ha='center', va='bottom')
+                        
+                    # Plot Energy
+                    axs[1].bar(labels, e_vals, color=['red', 'orange'], alpha=0.7)
+                    axs[1].set_title(f"Collision 2: Energy Change\nLoss: {err_e2:.1f}%")
+                    axs[1].set_ylabel("M.Kinetik (Joule)")
+                    for i, v in enumerate(e_vals):
+                        axs[1].text(i, v, f"{v:.5f}", ha='center', va='bottom')
+
+                    plt.suptitle(f"Analisis Tumbukan 2 - Trial {t+1}")
+                    plt.tight_layout()
+                    plt.show()
+            
+            else:
+                 print("[SKIP] Jumlah titik tidak sesuai.")
+        
+        # --- GLOBAL SUMMARY ---
+        if all_trials_data:
+            print("\n" + "="*80)
+            print(f"RINGKASAN PERBANDINGAN {n_trials} TRIAL (VELOCITY)")
+            print("="*80)
+            print(f"{'SEGMEN':<20} | {'AVG VELOCITY (m/s)':<20} | {'STD DEV':<15}")
+            print("-" * 80)
+            
+            data_np = np.array(all_trials_data)
+            # data_np shape: (n_trials, n_segments)
+            
+            means = data_np.mean(axis=0)
+            stds  = data_np.std(axis=0)
+            
+            for i in range(len(seg_labels)):
+                print(f"{seg_labels[i]:<20} | {means[i]:.4f}               | {stds[i]:.4f}")
+            print("-" * 80)
+            
+            # Plot Comparison
+            plt.figure(figsize=(10, 6))
+            x_pos = np.arange(len(seg_labels))
+            plt.errorbar(x_pos, means, yerr=stds, fmt='o-', color='blue', capsize=5, label='Rata-rata')
+            plt.xticks(x_pos, seg_labels, rotation=45)
+            plt.title(f"Profil Kecepatan Rata-Rata ({n_trials} Trial)")
+            plt.ylabel("Kecepatan (m/s)")
+            plt.grid(True)
+            plt.tight_layout()
+            plt.show()
+
+            # --- SUMMARY: MOMENTUM BAR CHART ---
+            p_np = np.array(all_trials_p)
+            mean_p = p_np.mean(axis=0)
+            std_p = p_np.std(axis=0)
+            
+            plt.figure(figsize=(10, 6))
+            plt.bar(seg_labels, mean_p, yerr=std_p, capsize=5, color='green', alpha=0.7)
+            plt.title(f"Rata-Rata Momentum per Segmen ({n_trials} Trial)")
+            plt.ylabel("Momentum (kg.m/s)")
+            plt.xticks(rotation=45)
+            plt.grid(axis='y', linestyle='--', alpha=0.5)
+            plt.tight_layout()
+            plt.show()
+
+            # --- SUMMARY: ENERGY WATERFALL CHART ---
+            e_np = np.array(all_trials_e)
+            mean_e = e_np.mean(axis=0)
+            
+            plt.figure(figsize=(12, 6))
+            # Use 'waterfall' style: bars for values, arrows for transitions
+            colors = plt.cm.summer(np.linspace(0.2, 0.8, len(seg_labels)))
+            bars = plt.bar(seg_labels, mean_e, color=colors, edgecolor='black', alpha=0.8)
+            
+            for bar, val in zip(bars, mean_e):
+                plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + (max(mean_e)*0.01), 
+                         f"{val:.4f} J", ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+            # Arrows for loss/change
+            for i in range(len(mean_e)-1):
+                start = mean_e[i]
+                end   = mean_e[i+1]
+                
+                # Draw arrow from center of bar i to center of bar i+1? 
+                # Better: Flow arrow in the gap
+                mid_x = i + 0.5
+                mid_y = (start + end)/2
+                
+                loss = start - end
+                if start > 0: pct_loss = (loss/start) * 100
+                else: pct_loss = 0
+                
+                color_arrow = 'red' if loss > 0 else 'blue' # Red for loss, Blue for gain (acceleration)
+                
+                plt.annotate('', xy=(i+0.9, end), xytext=(i+0.1, start),
+                             arrowprops=dict(arrowstyle="-|>", color=color_arrow, lw=2, ls='--'))
+                
+                txt = f"{pct_loss:.1f}%" if loss > 0 else f"+{abs(pct_loss):.1f}%"
+                plt.text(mid_x, mid_y, txt, ha='center', va='center', 
+                         color=color_arrow, fontsize=9, fontweight='bold', 
+                         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color_arrow, alpha=0.7))
+
+            plt.title(f"Waterfall Alur Energi Rata-Rata ({n_trials} Trial)")
+            plt.ylabel("Energi Kinetik (J)")
+            plt.xticks(rotation=45)
+            plt.grid(axis='y', linestyle='--', alpha=0.3)
+            plt.tight_layout()
+            plt.show()
+
 
 if __name__ == "__main__":
     main()
