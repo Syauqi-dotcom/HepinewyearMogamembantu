@@ -4,6 +4,7 @@
 import cv2
 import os
 import shutil
+import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -998,7 +999,9 @@ def main():
         else:
              print("   [SET] Menggunakan parameter KELERENG (Default Case 1/3).")
              
-        dist = float(input("\nJarak Ukur per segmen/antar titik (m): "))
+        # Distance will be asked per trial if needed
+        # dist = float(input("\nJarak Ukur per segmen/antar titik (m): ")) 
+        dist = 0.05 # placeholder default
         
         n_trials = int(input("Jumlah Trial: "))
         
@@ -1015,6 +1018,13 @@ def main():
             if vid_strategy == '2':
                 v_input = input(f"Masukkan nama video (Default {NAMA_VIDEO}): ")
                 if v_input.strip(): current_vid = v_input
+            
+            # Ask Distance per Trial
+            try:
+                dist = float(input(f"Jarak Ukur per segmen (m) untuk Trial {t+1}: "))
+            except:
+                dist = 0.05
+                print("   [INFO] Input error, menggunakan default 0.05 m")
             
             # Recalculate FPS
             fps_trial = proses_video_ke_frame(current_vid)
@@ -1198,6 +1208,46 @@ def main():
                      print(f"[INFO] Grafik Loss disimpan di: {save_path_loss}")
 
                      plt.show()
+                     
+                     # --- THEORETICAL CALCULATOR (NEW) ---
+                     print("\n" + "="*50)
+                     print(">>> ANALISIS PREDIKSI TEORITIS (VERIFIKASI)")
+                     q_theory = input("Ingin hitung prediksi teoritis (v = sqrt(10/7gh))? (y/n): ")
+                     if q_theory.lower() == 'y':
+                         try:
+                             angle_deg = float(input("  Masukkan Sudut Kemiringan Ramp (derajat): "))
+                             len_cm = float(input("  Masukkan Panjang Lintasan Ramp (cm)     : "))
+                             
+                             # Convert vars
+                             g = 9.8
+                             L = len_cm / 100.0 # to meter
+                             rad = math.radians(angle_deg)
+                             h = L * math.sin(rad)
+                             
+                             # v_solid_sphere = sqrt(10/7 * g * h)
+                             # 10/7 approx 1.428
+                             v_theory = math.sqrt((10/7) * g * h)
+                             
+                             print(f"\n  [TEORI]")
+                             print(f"  > Height (h)       : {h:.4f} m")
+                             print(f"  > V Teoritis       : {v_theory:.4f} m/s (Solid Sphere Rolling)")
+                             
+                             print(f"  [EKSPERIMEN]")
+                             print(f"  > V Shooter Akhir  : {v_s_end:.4f} m/s")
+                             
+                             diff_v = abs(v_theory - v_s_end)
+                             err_v = (diff_v / v_theory) * 100 if v_theory > 0 else 0
+                             
+                             print(f"  > Selisih (Delta)  : {diff_v:.4f} m/s")
+                             print(f"  > Error (% to Theory): {err_v:.2f}%")
+                             
+                             if err_v < 15:
+                                 print("\n  [KESIMPULAN] Data Video VALID & SESUAI TEORI (Matches).")
+                             else:
+                                 print("\n  [KESIMPULAN] Ada selisih signifikan. Cek gesekan/slipping atau kalibrasi jarak.")
+                                 
+                         except Exception as e:
+                             print(f"  [ERROR] Input tidak valid: {e}")
 
             else:
                  c_labels = [f"Titik {i+1}" for i in range(n_points)]
